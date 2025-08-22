@@ -7,8 +7,6 @@ const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
 
-const PizZip = require("pizzip");
-const Docxtemplater = require("docxtemplater");
 const JSZip = require("jszip");
 const mammoth = require("mammoth");
 
@@ -37,27 +35,25 @@ const upload = multer({
   },
 });
 
-// Helper to render a docx from a template buffer + data
-function renderDocx(templateBuffer, data) {
-  try {
-    const zip = new PizZip(templateBuffer);
-    const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
-    doc.setData(data);
+// Helper: simple placeholder replacement
+async function renderDocx(templateBuffer, data) {
+  // Load the .docx zip
+  const zip = await JSZip.loadAsync(templateBuffer);
 
-    doc.render(); // <-- this is where errors happen
+  // The main document text is stored in word/document.xml
+  let docXml = await zip.file("word/document.xml").async("string");
 
-    return doc.getZip().generate({ type: "nodebuffer", compression: "DEFLATE" });
-  } catch (error) {
-    // Show detailed Docxtemplater error
-    if (error.properties && error.properties.errors) {
-      console.error("Docxtemplater errors:", error.properties.errors);
-      throw new Error(
-        "Template render error: " +
-          error.properties.errors.map(e => e.properties.explanation).join(" | ")
-      );
-    }
-    throw error;
+  // Replace placeholders like {{date}}, {{name}}, etc.
+  for (const [key, value] of Object.entries(data)) {
+    const regex = new RegExp(`{{\\s*${key}\\s*}}`, "g");
+    docXml = docXml.replace(regex, value);
   }
+
+  // Put modified XML back into the zip
+  zip.file("word/document.xml", docXml);
+
+  // Return the rebuilt .docx buffer
+  return await zip.generateAsync({ type: "nodebuffer" });
 }
 
 // --- 1) FORM MODE: generate from your default template ---
