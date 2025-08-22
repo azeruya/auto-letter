@@ -9,6 +9,7 @@ const path = require("path");
 
 const PizZip = require("pizzip");
 const Docxtemplater = require("docxtemplater");
+const JSZip = require("jszip");
 const mammoth = require("mammoth");
 
 const app = express();
@@ -38,17 +39,25 @@ const upload = multer({
 
 // Helper to render a docx from a template buffer + data
 function renderDocx(templateBuffer, data) {
-  const zip = new PizZip(templateBuffer);
-  const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
-  doc.setData(data);
   try {
-    doc.render();
-  } catch (e) {
-    // Helpful error to debug missing/typo placeholders
-    const msg = e.properties?.errors?.map(err => err.properties?.explanation).join("\n") || e.message;
-    throw new Error("Template render error:\n" + msg);
+    const zip = new PizZip(templateBuffer);
+    const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
+    doc.setData(data);
+
+    doc.render(); // <-- this is where errors happen
+
+    return doc.getZip().generate({ type: "nodebuffer", compression: "DEFLATE" });
+  } catch (error) {
+    // Show detailed Docxtemplater error
+    if (error.properties && error.properties.errors) {
+      console.error("Docxtemplater errors:", error.properties.errors);
+      throw new Error(
+        "Template render error: " +
+          error.properties.errors.map(e => e.properties.explanation).join(" | ")
+      );
+    }
+    throw error;
   }
-  return doc.getZip().generate({ type: "nodebuffer", compression: "DEFLATE" });
 }
 
 // --- 1) FORM MODE: generate from your default template ---
@@ -90,8 +99,9 @@ app.post("/api/generate", async (req, res) => {
     res.setHeader("Content-Disposition", 'attachment; filename="Official_Letter.docx"');
     return res.status(200).send(buffer);
   } catch (err) {
-    return res.status(400).json({ error: err.message });
-  }
+    console.error(JSON.stringify(err, null, 2)); // print full Docxtemplater error
+    return res.status(400).json({ error: err.message, details: err });
+    }
 });
 
 // --- 2) UPLOAD MODE: user uploads a .docx template, we fill and return ---
